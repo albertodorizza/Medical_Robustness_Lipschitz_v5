@@ -1,0 +1,50 @@
+# =============================================================================
+# requirements.txt
+# =============================================================================
+# Install with:  pip install -r requirements.txt
+#
+# Verified against the actual imports in the codebase, not just the packages
+# the project conceptually needs.
+# =============================================================================
+
+# ---- Core -------------------------------------------------------------------
+torch>=2.1,<3
+torchvision>=0.16,<1
+numpy>=1.24,<2
+
+# ---- Image processing and corruptions ---------------------------------------
+scikit-image>=0.21        # augm/corruptions.py, and SLIC for superpixel masks
+opencv-python>=4.8        # shared/DatasetRegistry.py image and mask I/O
+Pillow>=10.0
+scipy>=1.10
+
+# Wand is a HARD dependency, not an optional one: augm/corruptions.py imports
+# wand.image at module level (not inside a try), so every script that touches a
+# corruption fails at import time without it.  It only backs motion_blur, which
+# this project does not use, but the import happens regardless.
+#
+# Wand binds to ImageMagick, which must also be installed at SYSTEM level --
+# pip alone is not enough:
+#     Debian/Ubuntu:  sudo apt-get install libmagickwand-dev
+#     macOS:          brew install imagemagick
+Wand>=0.6
+
+# ---- Config, logging, progress ----------------------------------------------
+python-box>=7.0
+wandb>=0.16
+tqdm>=4.65
+
+# ---- Plots and result tables ------------------------------------------------
+matplotlib>=3.7
+pandas>=2.0
+
+# ---- Notes ------------------------------------------------------------------
+# DINOv2 is fetched with torch.hub from facebookresearch/dinov2, so the first
+# run needs network access.  Point TORCH_HOME at a shared writable directory so
+# it is downloaded once instead of once per job:
+#
+#     export TORCH_HOME=/path/to/shared/torch_cache
+#
+# accimage (referenced in augm/corruptions.py) is imported inside a try/except
+# and is optional; it is a faster torchvision image backend, deliberately not
+# listed here.
