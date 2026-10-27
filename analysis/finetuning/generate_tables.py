@@ -528,11 +528,13 @@ def make_paper_table(cls_results, seg_results, output_file):
         r"\centering",
         r"\footnotesize",
         r"\setlength{\tabcolsep}{3pt}",
-        r"\caption{Clean test accuracy (classification) and Dice score "
-        r"(segmentation), in percent, as mean $\pm$ standard deviation over five "
-        r"seeds. Configurations: H (head only), H+SN (head with spectral "
-        r"regularization), H+L (head and last backbone block), H+L+SN (both).}",
-        r"\label{tab:clean_metrics}",
+        r"\caption{Clean test accuracy in classification and Dice score in "
+        r"segmentation, in percent, as mean $\pm$ standard deviation over five "
+        r"seeds. In H only the head is trained, with the backbone frozen, while "
+        r"in H+L the last backbone block is trained as well. The +SN "
+        r"configurations add the spectral penalty on the head, with "
+        r"$\lambda^\star = 0.3$ in classification and $\lambda^\star = 0.1$ in "
+        r"segmentation.}",
         r"\begin{tabular}{l l ccc ccccc}",
         r"\toprule",
         r" & & \multicolumn{3}{c}{\textbf{Classification (accuracy)}} & "

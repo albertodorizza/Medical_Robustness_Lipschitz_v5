@@ -68,7 +68,7 @@ def table(df: pd.DataFrame, task: str, path: str, settings: list[str] | None) ->
                  f"{sub.seed.nunique()} seeds."),
         label=f"tab:{STEM}_{task}",
         column_format="llr" + "r" * len(cols), env="table*", pos="!tp",
-        size=r"\footnotesize\setlength{\tabcolsep}{4pt}")
+        size=r"\scriptsize\setlength{\tabcolsep}{3pt}\renewcommand{\arraystretch}{0.9}")
 
 
 def main() -> None:

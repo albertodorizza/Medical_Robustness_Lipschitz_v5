@@ -123,15 +123,16 @@ def figure(s: pd.DataFrame, path: str) -> None:
                 ax.set_title(aio.ARCH_LABEL[arch], fontsize=8)
             if j == 0:
                 ax.set_ylabel(r"$m^c/m$")
-                ax.annotate(task, xy=(0, 0.5), xycoords="axes fraction",
-                            xytext=(-30, 0), textcoords="offset points",
-                            rotation=90, ha="right", va="center",
-                            fontsize=9, fontweight="bold")
     handles = [plt.Rectangle((0, 0), 1, 1, color=ac.SETTING_COLOR[x], label=x)
                for x in settings]
     fig.legend(handles=handles, frameon=False, ncol=len(settings),
                loc="lower center", bbox_to_anchor=(0.5, 0.0))
-    fig.tight_layout(rect=(0, 0.05, 1, 1))
+    fig.tight_layout(rect=(0.04, 0.05, 1, 1))  # margine sinistro per le etichette di riga
+    # Etichette di riga nel margine sinistro, centrate su ciascuna riga di assi
+    for i, task in enumerate(tasks):
+        pos = axes[i][0].get_position()
+        fig.text(0.012, pos.y0 + pos.height / 2, task, rotation=90,
+                 ha="center", va="center", fontsize=9, fontweight="bold")
     ac.save_fig(fig, path)
 
 

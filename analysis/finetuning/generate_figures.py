@@ -498,7 +498,7 @@ def make_spectral_norm_figure(df):
             if row == 0:
                 ax.set_title(
                     BACKBONE_LABELS[backbone],
-                    fontweight="bold",
+                    #fontweight="bold",
                     pad=3,
                 )
 

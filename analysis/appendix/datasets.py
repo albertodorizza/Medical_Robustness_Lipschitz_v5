@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from collections import Counter
 
 import numpy as np
@@ -75,7 +76,7 @@ def write(df: pd.DataFrame, out: str, stem: str, caption: str, label: str,
             shown[c] = shown[c].map(tex)
     body = shown.to_latex(index=index, escape=False, float_format="%.2f")
     with open(os.path.join(out, f"{stem}.tex"), "w") as fh:
-        fh.write("\n".join([r"\begin{table}[!htbp]", r"\centering", r"\small",
+        fh.write("\n".join([r"\begin{table}[!htbp]", r"\centering", r"\footnotesize",
                             rf"\caption{{{caption}}}", rf"\label{{{label}}}",
                             body, r"\end{table}", ""]))
     print(f"  wrote {stem}.tex / .csv  ({len(df)} rows)")
@@ -100,6 +101,26 @@ def raw_class_counts(root: str) -> dict[str, int]:
 # -----------------------------------------------------------------------------
 # per-dataset collection
 # -----------------------------------------------------------------------------
+TRACT = {"lower-gi-tract": "lower GI", "upper-gi-tract": "upper GI"}
+SITE_FIX = {"orophaynx": "oropharynx"}
+
+
+def split_class(name: str) -> tuple[str, str]:
+    """Hyper-Kvasir classes are folder paths (tract/group/class): keep the tract
+    and the class, which is unique on its own. Flat names have no tract."""
+    parts = name.split("/")
+    if len(parts) == 1:
+        return "", name
+    return TRACT.get(parts[0], parts[0]), parts[-1]
+
+
+def site_label(site: str) -> str:
+    """Clean an AIRCARE site folder name: drop counts in brackets, fix typos."""
+    s = re.sub(r"\(.*?\)", "", site.replace("_", " ")).strip().lower()
+    s = SITE_FIX.get(s, s)
+    return s[:1].upper() + s[1:]
+
+
 def classification_tables(out: str) -> list[dict]:
     rows = []
     dropped = []
@@ -110,21 +131,25 @@ def classification_tables(out: str) -> list[dict]:
                                          max_per_class=None)
         kept = Counter(ds.labels.tolist())
 
+        tracts, names = zip(*(split_class(c) for c in ds.classes))
         per_class = pd.DataFrame({
-            "Class": ds.classes,
+            "Tract": tracts, "Class": names,
             "Images": [kept[i] for i in range(len(ds.classes))],
         })
+        if not any(tracts):
+            per_class = per_class.drop(columns="Tract")
         per_class["Share (\\%)"] = (100 * per_class["Images"]
                                     / per_class["Images"].sum()).round(2)
         write(per_class, out, f"classes_{key}",
-              caption=(f"{PRETTY.get(key, key)}: images per class, after the "
-                       f"\\texttt{{min\\_per\\_class}} = {MIN_PER_CLASS} rule."),
+              caption=(f"{PRETTY.get(key, key)}: images per class, after removing "
+                       f"the classes with fewer than {MIN_PER_CLASS} images."
+                       + (" Classes are grouped by gastrointestinal tract." if any(tracts) else "")),
               label=f"tab:classes-{key.replace('_', '-')}")
 
         for cls, n in sorted(before.items()):
             if cls not in ds.class_to_idx:
                 dropped.append({"Dataset": PRETTY.get(key, key),
-                                "Class": cls, "Images": n})
+                                "Class": split_class(cls)[1], "Images": n})
 
         rows.append({
             "Dataset": PRETTY.get(key, key), "Task": "Classification",
@@ -154,7 +179,7 @@ def segmentation_tables(out: str) -> list[dict]:
         if spec.sources:
             for site, n in sorted(Counter(ds.sites).items()):
                 sel = np.array([s == site for s in ds.sites])
-                sites.append({"Site": site.replace("_", " "), "Images": n,
+                sites.append({"Site": site_label(site), "Images": n,
                               "Median lesion area (\\%)":
                                   round(100 * float(np.median(areas[sel])), 2)})
 

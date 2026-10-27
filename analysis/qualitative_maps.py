@@ -3,29 +3,49 @@ analysis/qualitative_maps.py
 ============================
 Qualitative view of a localized corruption in the feature space.
 
-One row per corruption type. Columns: the corrupted image with the mask
-contour, then the per-location distortion at the head input for each
-fine-tuning setting, with the mask contour on top. H+SN is omitted by default
-because on a frozen backbone its features are identical to those of H.
+One row per (backbone, corruption type), all on the SAME image and mask, so
+that rows differ only by backbone or corruption. Columns: the corrupted image,
+then the per-location distortion at the head input for each fine-tuning
+setting, with the mask contour on top. H+SN is omitted by default because on a
+frozen backbone its features are identical to those of H.
 
 The image, the mask and the noise are generated exactly as in the corruption
 sweep (same CorruptedDataset, same seed), and the SN checkpoints are the ones
 trained with the selected lambda.
 
-    python -m analysis.qualitative_maps --arch vit --dataset kvasir_v2 \
-        --results_root $RESULTS_ROOT --out paper_results/qualitative
+Body figure (two backbones, one corruption):
+    python -m analysis.qualitative_maps --archs vit resnet \
+        --ptypes "Gaussian Noise" --indices 12 --style overlay
 
-Outputs (in --out): qualitative_<arch>_<dataset>.pdf/.png and a CSV with the
-inside/outside mean distortion of every panel.
+Appendix figure (three backbones, two corruptions):
+    python -m analysis.qualitative_maps --archs vit resnet dinov2 \
+        --ptypes "Gaussian Noise" "Contrast" --indices 12 --style overlay
+
+Two styles:
+    grid     maps at the resolution of the feature grid (nearest upsampling);
+    overlay  maps upsampled bilinearly and overlaid on the image, with an extra
+             column for the binary mask. Easier to read across backbones whose
+             grids differ (7x7 for ResNet-34, 14x14 for ViT-B, 16x16 for DINOv2).
+
+The colour scale is shared by the whole figure, so rows can be compared.
+
+Checks: every checkpoint path is printed and must exist, and the script stops
+if two settings of the same backbone load the same file or give identical maps
+(which would mean that a checkpoint is missing or misnamed).
+
+Outputs (in --out), one set per index:
+    qualitative_<archs>_<dataset>_idx<NNNN>[_<ptypes>].pdf/.png       (grid)
+    qualitative_<archs>_<dataset>_idx<NNNN>[_<ptypes>]_overlay.pdf/.png
+    qualitative_<archs>_<dataset>_idx<NNNN>[_<ptypes>].csv             (in/out means)
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import sys
 
-import numpy as np
 import pandas as pd
 import torch
 from box import Box
@@ -44,7 +64,10 @@ from shared.paths import FINETUNING, CLASSIFICATION, run_name, split_file_dir
 from shared.splits import load_or_make_split
 
 ARCH_FULL = {"resnet": "resnet34", "vit": "vit_b_16", "dinov2": "dinov2"}
+ARCH_LABEL = {"resnet": "ResNet-34", "vit": "ViT-B/16", "dinov2": "DINOv2"}
 FREEZE = {"H": "head", "H+SN": "head", "H+L": "head+last", "H+L+SN": "head+last"}
+PTYPE_SHORT = {"Gaussian Noise": "noise", "Contrast": "contrast",
+               "Defocus Blur": "blur", "Brightness": "brightness"}
 LAMBDA_STAR_CLS = 0.3
 
 
@@ -56,6 +79,31 @@ def checkpoint(root: str, dataset: str, arch: str, setting: str,
     folder = run_name(arch, freeze, lam_run, seed)
     return os.path.join(root, FINETUNING, CLASSIFICATION, dataset, folder,
                         f"{arch}_{freeze}.pth")
+
+
+def file_hash(path: str) -> str:
+    """Short hash of a file, to tell two checkpoints apart."""
+    h = hashlib.md5()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()[:10]
+
+
+def load_models(args, arch: str, device) -> dict:
+    """Load every setting of one backbone, checking that they differ."""
+    models, hashes = {}, {}
+    for setting in args.settings:
+        ckpt = checkpoint(args.results_root, args.dataset, arch, setting,
+                          args.lam, args.split_seed)
+        if not os.path.exists(ckpt):
+            sys.exit(f"  [missing] {ARCH_LABEL[arch]} {setting}: {ckpt}")
+        hashes[setting] = file_hash(ckpt)
+        print(f"  {ARCH_LABEL[arch]:<9} {setting:<7} {hashes[setting]}  {ckpt}")
+        models[setting] = build_model(ARCH_FULL[arch], peek_num_classes(ckpt), ckpt, device)
+    if len(set(hashes.values())) < len(hashes):
+        sys.exit(f"  two settings of {ARCH_LABEL[arch]} load the same checkpoint: {hashes}")
+    return models
 
 
 def corrupt(base, index: int, ptype: str, shape: str, ratio: float,
@@ -91,22 +139,33 @@ def region_means(dmap: torch.Tensor, cmask: torch.Tensor) -> tuple[float, float]
     return inside, outside
 
 
-def figure(rows: list[dict], settings: list[str], metric: str, path: str) -> None:
-    """Rows = corruption types, columns = corrupted image + one map per setting."""
+def _finish(fig, axes, plt, im, label, path):
+    for ax in axes.flat:
+        ax.set_xticks([]); ax.set_yticks([])
+        ax.grid(False)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+    cbar = fig.colorbar(im, ax=axes.ravel().tolist(), fraction=0.02, pad=0.01)
+    cbar.ax.tick_params(labelsize=6)
+    cbar.set_label(label, fontsize=7)
+    ac.save_fig(fig, path)
+
+
+def figure(rows: list[dict], settings: list[str], metric: str, vmax: float,
+           path: str) -> None:
+    """Maps on the feature grid. Columns: corrupted image + one map per setting."""
     plt = ac.setup_style()
     n_col = 1 + len(settings)
-    fig, axes = plt.subplots(len(rows), n_col, figsize=(1.55 * n_col, 1.6 * len(rows)),
+    fig, axes = plt.subplots(len(rows), n_col, figsize=(1.55 * n_col + 0.3, 1.6 * len(rows)),
                              squeeze=False)
-    label = r"$1-\cos$" if metric == "cos" else "MSE"
     for i, row in enumerate(rows):
         mask = row["mask"].numpy()
         ax = axes[i][0]
         ax.imshow(row["corrupted"].permute(1, 2, 0).numpy())
         ax.contour(mask, levels=[0.5], colors="white", linewidths=0.6)
-        ax.set_ylabel(row["ptype"], fontsize=8)
+        ax.set_ylabel(row["label"], fontsize=8)
         if i == 0:
             ax.set_title("corrupted", fontsize=8)
-        vmax = max(float(row["maps"][s].max()) for s in settings)
         for j, setting in enumerate(settings, start=1):
             ax = axes[i][j]
             dmap = torch.nn.functional.interpolate(
@@ -118,13 +177,38 @@ def figure(rows: list[dict], settings: list[str], metric: str, path: str) -> Non
             ax.set_xlabel(f"in {d_in:.2f} / out {d_out:.2f}", fontsize=7)
             if i == 0:
                 ax.set_title(setting, fontsize=8)
-        cbar = fig.colorbar(im, ax=axes[i][1:].tolist(), fraction=0.03, pad=0.02)
-        cbar.ax.tick_params(labelsize=6)
-        cbar.set_label(label, fontsize=7)
-    for ax in axes.flat:
-        ax.set_xticks([]); ax.set_yticks([])
-        ax.grid(False)
-    ac.save_fig(fig, path)
+    _finish(fig, axes, plt, im, r"$1-\cos$" if metric == "cos" else "MSE", path)
+
+
+def figure_overlay(rows: list[dict], settings: list[str], metric: str, vmax: float,
+                   path: str) -> None:
+    """Maps upsampled on the image. Columns: corrupted image, binary mask, then
+    the distortion of each setting overlaid on the image with the mask contour."""
+    plt = ac.setup_style()
+    n_col = 2 + len(settings)
+    fig, axes = plt.subplots(len(rows), n_col, figsize=(1.7 * n_col + 0.4, 1.8 * len(rows)),
+                             squeeze=False)
+    for i, row in enumerate(rows):
+        image = row["corrupted"].permute(1, 2, 0).numpy()
+        mask = row["mask"].numpy()
+        axes[i][0].imshow(image)
+        axes[i][0].set_ylabel(row["label"], fontsize=8)
+        axes[i][1].imshow(mask, cmap="gray", vmin=0, vmax=1)
+        if i == 0:
+            axes[i][0].set_title("corrupted image", fontsize=7)
+            axes[i][1].set_title("corruption mask", fontsize=7)
+        for j, setting in enumerate(settings, start=2):
+            ax = axes[i][j]
+            dmap = torch.nn.functional.interpolate(
+                row["maps"][setting][None, None], size=mask.shape,
+                mode="bilinear", align_corners=False)[0, 0].numpy()
+            ax.imshow(image)
+            im = ax.imshow(dmap, cmap="magma", alpha=0.6, vmin=0, vmax=vmax)
+            ax.contour(mask, levels=[0.5], colors="cyan", linewidths=0.6)
+            d_in, d_out = row["means"][setting]
+            title = f"in={d_in:.3f}, out={d_out:.3f}"
+            ax.set_title(f"{setting}\n{title}" if i == 0 else title, fontsize=7)
+    _finish(fig, axes, plt, im, r"$1-\cos$" if metric == "cos" else "MSE", path)
 
 
 def main() -> None:
@@ -132,12 +216,15 @@ def main() -> None:
     p.add_argument("--results_root", default=os.environ.get("RESULTS_ROOT"))
     p.add_argument("--out", default="paper_results/qualitative")
     p.add_argument("--dataset", default="kvasir_v2")
-    p.add_argument("--arch", default="vit", choices=list(ARCH_FULL))
+    p.add_argument("--archs", nargs="+", default=["vit"], choices=list(ARCH_FULL),
+                   help="one or more backbones, one block of rows each. Default vit.")
+    p.add_argument("--arch", default=None, choices=list(ARCH_FULL),
+                   help="deprecated alias for a single --archs value.")
     p.add_argument("--settings", nargs="+", default=["H", "H+L", "H+L+SN"],
                    choices=aio.SETTING_ORDER)
     p.add_argument("--lam", type=float, default=LAMBDA_STAR_CLS,
                    help="lambda of the SN checkpoints. Default 0.3 (lambda*).")
-    p.add_argument("--ptypes", nargs="+", default=["Gaussian Noise", "Contrast"])
+    p.add_argument("--ptypes", nargs="+", default=["Gaussian Noise"])
     p.add_argument("--shape", default="superpixel",
                    choices=["circular", "squared", "superpixel"])
     p.add_argument("--ratio", type=float, default=0.3)
@@ -145,50 +232,149 @@ def main() -> None:
     p.add_argument("--metric", default="cos", choices=["cos", "mse"])
     p.add_argument("--index", type=int, default=0,
                    help="position of the image in the test split.")
+    p.add_argument("--indices", type=int, nargs="+", default=None,
+                   help="test-set positions to draw, one figure per index. "
+                        "Default: only --index.")
     p.add_argument("--split_seed", type=int, default=0)
     p.add_argument("--split_dir", default="splits")
     p.add_argument("--corruption_seed", type=int, default=29,
                    help="base seed of the corruption sweep (its --seed).")
+    p.add_argument("--style", default="overlay", choices=["grid", "overlay", "both"],
+                   help="grid: maps on the feature grid; overlay: maps upsampled "
+                        "on the image, with the mask column. Default overlay.")
+    p.add_argument("--name", default=None,
+                   help="output file stem; default built from archs, dataset, index.")
     p.add_argument("--gpu", type=int, default=0)
+    p.add_argument(
+        "--image_path",
+        type=str,
+        default=None,
+        help="Path of a specific image to analyze instead of the test split.",
+    )
+
     args = p.parse_args()
     if not args.results_root:
         sys.exit("set --results_root or $RESULTS_ROOT")
+    if args.arch:
+        args.archs = [args.arch]
 
     device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
+
     base = build_dataset(args.dataset, image_size=(224, 224))
+
+    split = load_or_make_split(
+        base,
+        split_file_dir(args.split_dir, args.dataset),
+        args.split_seed,
+    )
+
+    if args.image_path:
+        target = os.path.realpath(args.image_path)
+
+        samples = getattr(base, "samples", None)
+        if samples is None:
+            samples = getattr(base, "imgs", None)
+
+        if samples is None:
+            sys.exit(
+                "Cannot locate image: dataset exposes neither .samples nor .imgs."
+            )
+
+        matches = [
+            i for i, (path, *_) in enumerate(samples)
+            if os.path.realpath(path) == target
+        ]
+
+        if not matches:
+            sys.exit(f"Image not found in dataset: {target}")
+
+        if len(matches) > 1:
+            sys.exit(f"Multiple dataset entries match: {target}")
+
+        source_indices = {0: matches[0]}
+        indices = [0]
+
+        print(f"Custom image: {target}")
+        print(f"Dataset index: {matches[0]}")
+    else:
+        indices = args.indices if args.indices else [args.index]
+        source_indices = {
+            pos: split["test"][pos]
+            for pos in indices
+        }
+
     split = load_or_make_split(base, split_file_dir(args.split_dir, args.dataset),
                                args.split_seed)
-    index = split["test"][args.index]
-    arch_full = ARCH_FULL[args.arch]
-    layer = ac.HEAD_INPUT[args.arch]
+    indices = args.indices if args.indices else [args.index]
 
-    images = {pt: corrupt(base, index, pt, args.shape, args.ratio, args.severity,
-                          args.corruption_seed) for pt in args.ptypes}
-    rows = [{"ptype": pt, "corrupted": images[pt][1], "mask": images[pt][2][0],
-             "maps": {}, "means": {}} for pt in args.ptypes]
+    # Corrupted images first: they depend on the image, not on the backbone.
+    
+    images = {
+        pos: {
+            pt: corrupt(
+                base,
+                source_indices[pos],
+                pt,
+                args.shape,
+                args.ratio,
+                args.severity,
+                args.corruption_seed,
+            )
+            for pt in args.ptypes
+        }
+        for pos in indices
+    }
+
+
+    # One backbone at a time, so that only its checkpoints sit on the GPU.
+    rows = {pos: [] for pos in indices}
     records = []
-    for setting in args.settings:
-        ckpt = checkpoint(args.results_root, args.dataset, args.arch, setting,
-                          args.lam, args.split_seed)
-        model = build_model(arch_full, peek_num_classes(ckpt), ckpt, device)
-        for row in rows:
-            clean, corrupted, cmask = images[row["ptype"]]
-            dmap = distortion_map(model, layer, arch_full, clean, corrupted,
-                                  args.metric, device)
-            row["maps"][setting] = dmap
-            row["means"][setting] = region_means(dmap, cmask)
-            records.append({"setting": setting, "ptype": row["ptype"],
-                            "in": row["means"][setting][0],
-                            "out": row["means"][setting][1]})
-        del model
-        torch.cuda.empty_cache()
+    for arch in args.archs:
+        models = load_models(args, arch, device)
+        layer = ac.HEAD_INPUT[arch]
+        for pos in indices:
+            for pt in args.ptypes:
+                clean, corrupted, cmask = images[pos][pt]
+                label = ARCH_LABEL[arch] + ("" if len(args.ptypes) == 1 else f"\n{pt}")
+                row = {"label": label, "corrupted": corrupted, "mask": cmask[0],
+                       "maps": {}, "means": {}}
+                for setting in args.settings:
+                    dmap = distortion_map(models[setting], layer, ARCH_FULL[arch],
+                                          clean, corrupted, args.metric, device)
+                    row["maps"][setting] = dmap
+                    row["means"][setting] = region_means(dmap, cmask)
+                    records.append({"index": pos, "arch": arch, "setting": setting,
+                                    "ptype": pt, "in": row["means"][setting][0],
+                                    "out": row["means"][setting][1]})
+                maps = list(row["maps"].values())
+                for a in range(len(maps)):
+                    for b in range(a + 1, len(maps)):
+                        if torch.allclose(maps[a], maps[b], atol=1e-6):
+                            sys.exit(f"  {ARCH_LABEL[arch]}: settings "
+                                     f"{args.settings[a]} and {args.settings[b]} give "
+                                     "identical maps; check their checkpoints")
+                rows[pos].append(row)
+        del models
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     os.makedirs(args.out, exist_ok=True)
-    stem = os.path.join(args.out, f"qualitative_{args.arch}_{args.dataset}"
-                        + ("_mse" if args.metric == "mse" else ""))
-    pd.DataFrame(records).to_csv(stem + ".csv", index=False)
-    print(f"  [csv] {stem}.csv")
-    figure(rows, args.settings, args.metric, stem + ".pdf")
+    tag = "-".join(args.archs)
+    ptag = "" if args.ptypes == ["Gaussian Noise"] else "_" + "-".join(
+        PTYPE_SHORT.get(pt, pt) for pt in args.ptypes)
+    df = pd.DataFrame(records)
+    for pos in indices:
+        stem = args.name or f"qualitative_{tag}_{args.dataset}_idx{pos:04d}{ptag}"
+        if args.name and len(indices) > 1:
+            stem += f"_idx{pos:04d}"
+        stem = os.path.join(args.out, stem + ("_mse" if args.metric == "mse" else ""))
+        df[df["index"] == pos].to_csv(stem + ".csv", index=False)
+        vmax = max(float(m.max()) for r in rows[pos] for m in r["maps"].values())
+        if args.style in ("grid", "both"):
+            figure(rows[pos], args.settings, args.metric, vmax, stem + ".pdf")
+        if args.style in ("overlay", "both"):
+            figure_overlay(rows[pos], args.settings, args.metric, vmax, stem + "_overlay.pdf")
+        print(f"  [idx {pos:4d}] {stem}")
 
 
 if __name__ == "__main__":

@@ -11,7 +11,8 @@
 #   RESULTS_ROOT  OUTPUTS_MEDICAL root (required)
 #   REFRESH=1     re-read the results tree instead of the cache (needed after
 #                 any rerun of a stage)
-#   QUALITATIVE=1 also draw the qualitative maps (needs a GPU and checkpoints)
+#   QUALITATIVE=1 also draw the qualitative maps (needs a GPU and checkpoints);
+#                 QUAL_INDEX=<n> picks the test image (default 0)
 #   DATASETS=1    also emit Table 1 and the dataset appendix (needs the images)
 #
 # Final PDFs are copied to OUT_DIR/paper_figures/{main,appendix} and the
@@ -106,10 +107,17 @@ run analysis.appendix.corruption_audit ${C} --out "${OUT}/appendix_corruption" $
 # Needs the outputs of scripts 2, 4 and 6 and of per_dataset, all written above.
 run analysis.appendix.claims_per_dataset --out "${OUT}"
 
-# -- Optional: qualitative maps, Appendix A ------------------------------------
+# -- Optional: qualitative maps (Section 5.5 and appendix E) ---------------------
+# QUAL_INDEX = test-set position of the image (chosen with select_qualitative.py).
 if [ "${QUALITATIVE:-0}" = "1" ]; then
+    QI="${QUAL_INDEX:-0}"
     run analysis.qualitative_maps --results_root "${RESULTS_ROOT}" \
-        --out "${OUT}/qualitative" --arch vit --dataset kvasir_v2
+        --out "${OUT}/qualitative" --dataset kvasir_v2 --index "${QI}" \
+        --archs vit resnet --ptypes "Gaussian Noise" --style overlay --name qualitative_main
+    run analysis.qualitative_maps --results_root "${RESULTS_ROOT}" \
+        --out "${OUT}/qualitative" --dataset kvasir_v2 --index "${QI}" \
+        --archs vit resnet dinov2 --ptypes "Gaussian Noise" "Contrast" --style overlay \
+        --name qualitative_all
 fi
 if [ "${DATASETS:-0}" = "1" ]; then
     run analysis.appendix.datasets --out "${OUT}/appendix_datasets"
@@ -140,7 +148,8 @@ copy "${OUT}/appendix_mse/depth_leakage_both_stacked_mse.pdf"            appendi
 copy "${OUT}/appendix_mse/drift_predicts_damage_r0.3-0.6-0.9_mse_seg-none.pdf" appendix/E_predicts_mse.pdf
 copy "${OUT}/appendix_mse/in_out_dose_response_both_mse.pdf"             appendix/E_dose_response_mse.pdf
 copy "${OUT}/appendix_per_dataset/per_dataset_retained.pdf"              appendix/F_per_dataset_retained.pdf
-copy "${OUT}/qualitative/qualitative_vit_kvasir_v2.pdf"                  appendix/qualitative_vit_kvasir_v2.pdf
+copy "${OUT}/qualitative/qualitative_main_overlay.pdf"                   main/qualitative.pdf
+copy "${OUT}/qualitative/qualitative_all_overlay.pdf"                    appendix/qualitative_all.pdf
 
 # -- Copy the tables the paper \inputs, with the Overleaf layout --------------
 # OUT_DIR/paper_tables/{main,appendix} mirrors tables/{main,appendix}.

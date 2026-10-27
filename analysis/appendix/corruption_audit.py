@@ -119,23 +119,24 @@ def main() -> None:
 
     os.makedirs(args.out, exist_ok=True)
     rows = [{
-        "Mask shape": SHAPE_LABEL[r.shape],
+        "Mask": SHAPE_LABEL[r.shape],
         "$r$": f"{r.ratio:g}",
-        "effective ratio": f"{r.eff_mean:.3f}",
+        "effective": f"{r.eff_mean:.3f}",
         "range": f"[{r.eff_min:.3f}, {r.eff_max:.3f}]",
-        "max change outside": f"{int(r.max_out)}",
+        r"max $|\Delta|$ out": f"{int(r.max_out)}",
     } for r in df.itertuples()]
     source = (f"{len(images)} test images of \\texttt{{{args.dataset.replace('_', chr(92) + '_')}}}"
               if args.dataset else f"{len(images)} synthetic images")
     ac.write_table(
         pd.DataFrame(rows), os.path.join(args.out, "corruption_audit.tex"),
-        caption=(r"Corruption audit. \emph{effective ratio}: fraction of pixels "
+        caption=(r"Corruption audit. \emph{effective}: fraction of pixels "
                  r"actually corrupted, mean and range over all the runs of the "
-                 r"corruption sweep. \emph{max change outside}: largest absolute "
+                 r"corruption sweep. \emph{max $|\Delta|$ out}: largest absolute "
                  r"change of a pixel outside the mask (8-bit scale), over the four "
                  r"corruption types and the three severities, measured on "
                  + source + r"."),
-        label="tab:corruption_audit", column_format="lrrrr", pos="!htbp")
+        label="tab:corruption_audit", column_format="lrrrr", pos="!htbp",
+        size=r"\footnotesize\setlength{\tabcolsep}{4pt}")
     if not ok:
         raise SystemExit("a corruption modifies pixels outside its mask")
 
