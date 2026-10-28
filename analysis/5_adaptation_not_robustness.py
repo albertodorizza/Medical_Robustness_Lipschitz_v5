@@ -332,15 +332,19 @@ def figure(u: pd.DataFrame, d: pd.DataFrame, task: str, path: str) -> None:
 
     Both panels are keyed by ARCHITECTURE through the colour and by SETTING
     through the marker, so a colour means the same thing in both and the
-    architectures need no in-plot labels: one legend, on the right panel, is
-    enough for the whole figure.
+    architectures need no in-plot labels: one legend, in the upper right
+    corner of the right panel, is enough for the whole figure.  In the stacked
+    composite it is drawn on the classification row, i.e. at the top right of
+    the page, where the last contrast (H+L -> H+L+SN) is near zero and leaves
+    the corner empty.
     """
     plt = ac.setup_style()
     archs = [a for a in aio.ARCH_ORDER if (u.arch == a).any()]
     settings = [s for s in aio.SETTING_ORDER if (u.setting == s).any()]
     metric = metric_name(task)
 
-    fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.1),
+    # Short rows: the figure is two of these stacked in the body of the paper.
+    fig, axes = plt.subplots(1, 2, figsize=(7.2, 2.3),
                              gridspec_kw={"width_ratios": [1.05, 1.0]})
 
     # -- left: where each configuration sits on the two axes ---------------
@@ -353,7 +357,7 @@ def figure(u: pd.DataFrame, d: pd.DataFrame, task: str, path: str) -> None:
                 continue
             x, y = float(g.clean.mean()), float(g.retained.mean())
             pts.append((x, y))
-            ax.scatter(x, y, s=44, color=ARCH_COLOR[str(arch)],
+            ax.scatter(x, y, s=34, color=ARCH_COLOR[str(arch)],
                        marker=SETTING_MARKER[str(setting)], zorder=3,
                        edgecolor="white", linewidth=0.6)
         if len(pts) > 1:
@@ -405,10 +409,11 @@ def figure(u: pd.DataFrame, d: pd.DataFrame, task: str, path: str) -> None:
     arch_handles += [blank() for _ in range(rows - len(arch_handles))]
     setting_handles += [blank() for _ in range(rows - len(setting_handles))]
     ax.legend(handles=arch_handles + setting_handles, frameon=False,
-              fontsize=7.5, ncol=2, loc="best", handlelength=1.0,
-              columnspacing=1.0)
+              fontsize=7, ncol=2, loc="upper right", handlelength=1.0,
+              handletextpad=0.4, columnspacing=0.8, labelspacing=0.3,
+              borderaxespad=0.2)
 
-    fig.tight_layout()
+    fig.tight_layout(pad=0.3, w_pad=1.2)
     ac.save_fig(fig, path)
 
 

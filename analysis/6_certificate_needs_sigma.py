@@ -232,9 +232,15 @@ def figure(df: pd.DataFrame, task: str, path: str) -> None:
     s_all = summary(df, ["arch", "setting"])
     hatch = {"resnet": "", "vit": "//", "dinov2": ".."}
 
-    fig, axes = plt.subplots(1, 3, figsize=(9.6, 3.1))
+    fig, axes = plt.subplots(1, 3, figsize=(9.6, 2.4))
     width = 0.8 / max(len(archs), 1)
     pos = np.arange(len(settings))
+    # The keys sit inside the panels, in a band above 1.0 that no bar reaches
+    # (the at-risk rate saturates at 1.0 under Contrast), so the row is no
+    # taller than its axes.
+    top = 1.22
+    key = dict(frameon=False, fontsize=7, handlelength=1.2, handletextpad=0.4,
+               columnspacing=0.9, borderaxespad=0.2)
 
     def bars(ax, bound_col, observed_col, observed_color):
         """Grey = what the certificate promises, colour = what happened."""
@@ -255,13 +261,14 @@ def figure(df: pd.DataFrame, task: str, path: str) -> None:
     bars(ax, "cert_drop", "true_drop", ac.SETTING_COLOR["H+L+SN"])
     ax.axhline(1.0, color="#c8442a", linewidth=0.8, linestyle="--")
     ax.set_ylabel(f"{metric} drop")
-    ax.set_ylim(0, 1.15)
+    ax.set_ylim(0, top)
+    ax.set_yticks(np.arange(0, 1.01, 0.2))
     ax.legend(handles=[plt.Rectangle((0, 0), 1, 1, facecolor="#c9ccd1",
                                      edgecolor="0.45", label="certified"),
                        plt.Rectangle((0, 0), 1, 1,
                                      facecolor=ac.SETTING_COLOR["H+L+SN"],
                                      edgecolor="0.25", label="observed")],
-              frameon=False, fontsize=7.5, loc="center right")
+              loc="upper right", ncol=2, **key)
 
     # -- and what moves it --------------------------------------------------
     ax = axes[1]
@@ -282,19 +289,36 @@ def figure(df: pd.DataFrame, task: str, path: str) -> None:
     handles += [plt.Line2D([], [], ls="", marker=ac.ARCH_MARKER[str(a)],
                            color="0.35", label=aio.ARCH_LABEL[str(a)])
                 for a in archs]
-    ax.legend(handles=handles, frameon=False, fontsize=7, ncol=2,
-              loc="best", handlelength=1.0, columnspacing=0.8)
+    scatter_leg = ax.legend(handles=handles, loc="upper left", ncol=2,
+                            **{**key, "handlelength": 1.0, "labelspacing": 0.25})
 
     # -- the at-risk rate ---------------------------------------------------
     ax = axes[2]
     bars(ax, "certified_flip_rate", "flip_rate", ac.SETTING_COLOR["H+L"])
     ax.set_ylabel(f"fraction of {unit}s")
+    ax.set_ylim(0, top)
+    ax.set_yticks(np.arange(0, 1.01, 0.2))
     ax.legend(handles=[plt.Rectangle((0, 0), 1, 1, facecolor="white",
                                      edgecolor="0.45", hatch=hatch[str(a)],
                                      label=aio.ARCH_LABEL[str(a)]) for a in archs],
-              frameon=False, fontsize=7.5, loc="best")
+              loc="upper right", ncol=len(archs), **key)
 
     fig.tight_layout()
+    if scatter_leg is not None:
+        # The scatter key is empty space under the gaussian runs but not under
+        # Contrast: raise the top of the axis just enough to clear it.
+        ax = axes[1]
+        fig.canvas.draw()
+        box = scatter_leg.get_window_extent().transformed(ax.transAxes.inverted())
+        xy = ax.transAxes.inverted().transform(
+            ax.transData.transform(df[["sigma_max", "cert_drop"]].dropna().to_numpy()))
+        under = xy[(xy[:, 0] >= box.x0) & (xy[:, 0] <= box.x1)]
+        if len(under) and under[:, 1].max() > box.y0 - 0.03:
+            lo, hi = ax.get_ylim()
+            hi = lo + (hi - lo) * under[:, 1].max() / (box.y0 - 0.03)
+            # A drop above 1 means nothing: no ticks in the headroom.
+            ax.set_yticks(np.arange(0, 1.01, 0.2))
+            ax.set_ylim(lo, hi)
     ac.save_fig(fig, path)
 
 

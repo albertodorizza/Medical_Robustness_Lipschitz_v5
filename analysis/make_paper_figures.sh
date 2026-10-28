@@ -77,12 +77,13 @@ run analysis.stack_tasks "${D}/adaptation_not_robustness_classification.pdf" \
     -o "${D}/adaptation_not_robustness_stacked.pdf"
 
 # -- 6. Margin certificate ----------------------------------------------------
+# Keys on the TOP row here: the classification panels have the empty corners.
 D="${OUT}/6_certificate"
 for pert in gaussian Contrast; do
     run analysis.6_certificate_needs_sigma ${C} --out "${D}" --task classification \
-        --perturbation "${pert}" --no_legend --row_label classification
+        --perturbation "${pert}" --row_label classification
     run analysis.6_certificate_needs_sigma ${C} --out "${D}" --task segmentation \
-        --perturbation "${pert}" --row_label segmentation
+        --perturbation "${pert}" --no_legend --row_label segmentation
     run analysis.stack_tasks "${D}/certificate_needs_sigma_classification_${pert}.pdf" \
         "${D}/certificate_needs_sigma_segmentation_${pert}.pdf" \
         -o "${D}/certificate_needs_sigma_${pert}_stacked.pdf"
